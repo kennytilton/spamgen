@@ -1,8 +1,7 @@
 */.DS_Store
 /bin
 /.idea
-bulkmail/
-/bulkmail
+/bulkmail/*.txt
 /target
 /classes
 /checkouts
