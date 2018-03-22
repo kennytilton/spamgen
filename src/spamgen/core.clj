@@ -14,34 +14,39 @@
 
 (def spamgen-cli
   [["-t" "--test TESTCOUNT" "Number of test email records to process ignoring file arg"
-    :default 100
+    ;;:default 100
     :parse-fn #(Integer/parseInt %)
     :validate [#(<= 1 %) "Must be a number greater than one (1)"]]
 
-   ;; A boolean option defaulting to nil
-   ["-h" "--help"]]
-  )
+   ["-d" "--dump DUMPCOUNT" "Number of output email records to dump, per target IP"
+    ;;:default 10
+    :parse-fn #(Integer/parseInt %)
+    :validate [#(<= 1 %) "Must be a number greater than one (1) if specified"]]
+
+   ["-h" "--help"]])
+
 (declare pln)
 
-#_
-    (-main "bulkinput/emf-10.edn" "-h")
+#_(-main "-h")
 
-#_ (-main "bulkinput/emf-10.edn" "-h" "-t42")
+#_(-main "bulkinput/emf-1000.edn" "-t100" "-d10")
+
+#_(-main "bulkinput/emf-10.edn" "-h" "-t42")
 
 (defn -main [& args]
-  ;; #_ ;; uncomment during development so errors get through when async in play
-      (Thread/setDefaultUncaughtExceptionHandler
-        (reify Thread$UncaughtExceptionHandler
-          (uncaughtException [_ thread ex]
-            (log/error {:what :uncaught-exception
-                        :exception ex
-                        :where (str "Uncaught exception on" (.getName thread))}))))
+  ;; uncomment during development so errors get through when async in play
+  (Thread/setDefaultUncaughtExceptionHandler
+    (reify Thread$UncaughtExceptionHandler
+      (uncaughtException [_ thread ex]
+        (log/error {:what      :uncaught-exception
+                    :exception ex
+                    :where     (str "Uncaught exception on" (.getName thread))}))))
 
-  (pln :main args )
+  (pln :main args)
 
   (let [input (cli/parse-opts args spamgen-cli)
         {:keys [options arguments summary errors]} input
-        {:keys [  test help]} options]
+        {:keys [test help]} options]
 
     (pln :inp input)
     (pln :options options)
@@ -54,19 +59,30 @@
              "Options:\n" (subs summary 1))
 
       :default (do
-                 #_ (email-batch-to-sendfiles <tbd>)
+                 #_(email-batch-to-sendfiles <tbd>)
                  (println :fnyi))
       ))
 
-  ;; WARNING: comment this out for use with REPL
-  ;;(shutdown-agents)
+  ;; WARNING: comment this out for use with REPL. Necessary, to
+  ;; get standalone version to exit reliably.
+  ;;
+  ;; (shutdown-agents)
   )
 
 #_(-main)
 
-(declare emw-email-consider running-mean-ok? edn-dump pln)
+(declare email-stream-to-sendfiles
+  emw-email-consider
+  running-mean-ok?
+  edn-dump pln)
 
-(defn email-batch-to-sendfiles
+(defn email-batch-to-sendfiles [batch-input-path]
+  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader batch-input-path))]
+    (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
+      (email-stream-to-sendfiles
+        (take-while (partial not= :fini) edn-seq)))))
+
+(defn email-stream-to-sendfiles
   "[email-stream (coll)] Produce one or more output files targeted
   for different SMTP servers constraining the sequence of emails
   in each to honor spam score constraints specified in config.edn
@@ -79,7 +95,7 @@
         workers (map (fn [id smtp-ip]
                        {:id        id
                         :smtp-ip   smtp-ip
-                        :ch        (chan 10)                ;; todo try buffering
+                        :ch        (chan 10)
                         :addrs-hit em-addrs-hit
                         :out-file  (str
                                      (:bulkmail-out-path env) "/"
@@ -97,24 +113,32 @@
                             (go-loop []
                               (if-let [task (<! (:ch w))]
                                 (do
-                                  ;;(p ::consider (emw-email-consider w task))
+                                  (emw-email-consider w task)
                                   (recur))
-                                [:fini (:id w)])))
+                                (do
+                                  (pln :worker-fini (:id w))
+                                  [:fini (:id w)]))))
                        workers))]
 
     ;; --- initialize spit files for latter appends, including now a header
+
+    (pln :spit-init)
+
     (doseq [w workers]
       (spit (:out-file w)
         {:run-date (.toString (java.util.Date.))
          :smtp-ip  (:smtp-ip w)}))
 
+    (pln :feeding)
+
     (p :feed-workers
       (dorun
         (map (fn [worker em-rec]
-               (pln :do-em em-rec)
                (>!! (:ch worker) em-rec))
           (cycle workers)
           email-stream)))
+
+    (pln :waiting-on-workers)
 
     (loop [[p1 & rp :as ps] work-procs]
       (when p1
@@ -155,24 +179,24 @@
                 :new-mean (/ new-sum new-ct)
                 :limit (:max-overall-spam-score env)))
 
-        ;;(not (running-mean-ok? w (:spam-score task)))
+        (not (p :running-mean (running-mean-ok? w (:spam-score task))))
         ;; todo save to "try later" array to be possibly
         ;; incorporated later when running mean might drop
-        ;;(do (pln :running-mean-bad (:spam-score task)))
+        (do (pln :running-mean-bad (:spam-score task)))
 
         :default
-        (when true #_(dosync
-                       ;; todo make sure addr key matches generator when testing
-                       ;; or work out how to normalize keys in spec
-                       (let [addr (:email-address task)]
-                         (when-not (get @(:addrs-hit w) addr)
-                           (alter (:addrs-hit w) conj addr)
-                           true)))
+        (when (dosync
+                ;; todo make sure addr key matches generator when testing
+                ;; or work out how to normalize keys in spec
+                (let [addr (:email-address task)]
+                  (when-not (get @(:addrs-hit w) addr)
+                    (alter (:addrs-hit w) conj addr)
+                    true)))
           (swap! (:stats w) merge {:em-ct     new-ct
                                    :score-sum new-sum})
 
           ;;; todo batch spits instead of spitting individually
-          #_(pln :sending-to (:id w) (:email-address task))
+          ;; (pln :sending-to (:id w) (:email-address task))
           (spit (:out-file w) task :append true))))))
 
 (defn running-mean-ok?
@@ -199,7 +223,7 @@
 (defn bulk-input-build [prefix em-count]
   (let [bf (str "bulkinput/" prefix "-" em-count ".edn")]
     (spit bf {:build-date (.toString (java.util.Date.))
-              :count em-count})
+              :count      em-count})
     (doseq [em (email-records-test-gen em-count)]
       (spit bf em :append true))))
 
@@ -210,8 +234,7 @@
 
 ;; (bulk-input-sequence "bulkinput/emf-10.edn" println)
 
-#_
-    (bulk-input-build "emf" 10)
+#_(bulk-input-build "emf" 100)
 
 (defn edn-load [path]
   (with-open [in (java.io.PushbackReader. (clojure.java.io/reader path))]

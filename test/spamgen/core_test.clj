@@ -12,22 +12,32 @@
 
 (tufte/add-basic-println-handler! {})
 
-#_
 (deftest devtest
-  (profile
-    {:dynamic? true}
+    (profile
+      {:dynamic? true}
 
-    (p ::send-50k
-      (email-batch-to-sendfiles
-        (email-records-test-gen 50000)))))
+      (p :top-main
+        (email-stream-to-sendfiles
+          (email-records-test-gen 40000)))))
 
-(deftest infile-edn
-  (pln :startedn)
-  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader "bulkinput/emf-10.edn"))]
-    (pln :ednin in)
-    (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
-      (pln :eseq (take-while (partial not= :fini) edn-seq))
-      (email-batch-to-sendfiles (take-while (partial not= :fini) edn-seq)))))
+#_(deftest infile-bath-edn
+    (email-batch-to-sendfiles "bulkinput/emf-1000.edn")
+    #_(with-open [in (java.io.PushbackReader. (clojure.java.io/reader "bulkinput/emf-1000.edn"))]
+        (pln :ednin in)
+        (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
+          (pln :eseq (take-while (partial not= :fini) edn-seq))
+          (email-batch-to-sendfiles (take-while (partial not= :fini) edn-seq)))))
+
+(deftest infile-stream-edn
+    (with-open [in (java.io.PushbackReader. (clojure.java.io/reader "bulkinput/emf-100.edn"))]
+      (pln :ednin in)
+      (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
+        ;; (pln :eseq (take-while (partial not= :fini) edn-seq))
+        (email-stream-to-sendfiles (take-while (partial not= :fini) edn-seq))
+        #_(doseq [erec (take-while (partial not= :fini) edn-seq)]
+            (pln :erec erec))
+        (pln :infile-stream-edn-fini))))
+
 
 #_(deftest devtest-duped
     (email-batch-to-sendfiles
