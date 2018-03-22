@@ -32,6 +32,19 @@
 
    ["-h" "--help"]])
 
+(def ^:dynamic *env*
+  {
+   :smtp ["1.2.3.4" "10.20.30.40" "100.200.101.201"
+          "11.22.33.44" "111.112.113.114" "22.33.44.55"]
+   :worker-ct 6
+   :max-individual-spam-score 0.3
+   :max-overall-spam-score 0.05
+   :running-mean-max 0.1
+   :running-mean-span 100
+   :total-email-ct 100
+   :bulkmail-out-path "bulkmail"
+   })
+
 (declare pln email-stream-to-sendfiles-mp email-stream-to-sendfiles)
 
 #_
@@ -45,7 +58,7 @@
                     :exception ex
                     :where     (str "Uncaught exception on" (.getName thread))}))))
 
-  (pln :config!!! (select-keys env [:smtp  :worker-ct
+  (pln :config!!! (select-keys *env* [:smtp  :worker-ct
                                     :max-individual-spam-score
                                     :max-overall-spam-score
                                     :running-mean-max
@@ -106,15 +119,15 @@
                         :ch        (chan)
                         :addrs-hit em-addrs-hit
                         :out-file  (str
-                                     (:bulkmail-out-path env) "/"
+                                     (:bulkmail-out-path *env*) "/"
                                      smtp-ip ".txt")
                         :stats     (atom {:em-ct        0
                                           :running-mean 0
                                           :score-sum    0})})
                   (range)
-                  (take (min (count (:smtp env))
-                          (:worker-ct env))
-                    (:smtp env)))
+                  (take (min (count (:smtp *env*))
+                          (:worker-ct *env*))
+                    (:smtp *env*)))
 
         work-procs (dorun
                      (map (fn [w]
@@ -175,13 +188,13 @@
                         :smtp-ip   smtp-ip
                         :addrs-hit em-addrs-hit
                         :out-file  (str
-                                     (:bulkmail-out-path env) "/"
+                                     (:bulkmail-out-path *env*) "/"
                                      smtp-ip ".txt")
                         :stats     (atom {:em-ct        0
                                           :running-mean 0
                                           :score-sum    0})})
                   (range)
-                  (take 1 (:smtp env))))]
+                  (take 1 (:smtp *env*))))]
 
     ;; --- initialize spit files for latter appends, including now a header
 
@@ -209,11 +222,11 @@
 
   [w task]
 
-  (pln :consider task @(:stats w)
-    :max-score (:max-individual-spam-score env))
+  #_ (pln :consider task @(:stats w)
+    :max-score (:max-individual-spam-score *env*))
 
   (cond
-    (> (:spam-score task) (:max-individual-spam-score env))
+    (> (:spam-score task) (:max-individual-spam-score *env*))
     (do #_(pln :email-indy-bad :w (:id w) :score (:spam-score task)))
 
     :default
@@ -222,10 +235,10 @@
           new-ct (inc (:em-ct stats))]
       (cond
         (> (/ new-sum new-ct)
-          (:max-overall-spam-score env))
+          (:max-overall-spam-score *env*))
         (do #_(pln :overall-email-mean-bad :w (:id w) :score (:spam-score task)
                 :new-mean (/ new-sum new-ct)
-                :limit (:max-overall-spam-score env)))
+                :limit (:max-overall-spam-score *env*)))
 
         (not (p :running-mean (running-mean-ok? w (:spam-score task))))
         ;; todo save to "try later" array to be possibly
@@ -257,11 +270,11 @@
   (let [stats @(:stats w)
         running-mean (:running-mean stats)
         new-ct (min
-                 (:running-mean-span env)
+                 (:running-mean-span *env*)
                  (inc (:em-ct stats)))
         new-mean (+ running-mean
                    (/ (- new-score running-mean) new-ct))]
-    (when (<= new-mean (:running-mean-max env))
+    (when (<= new-mean (:running-mean-max *env*))
       (swap! (:stats w) merge {:em-ct        new-ct
                                :running-mean new-mean})
       true)))

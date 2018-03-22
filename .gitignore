@@ -1,4 +1,7 @@
+*/.DS_Store
+/bin
 /.idea
+bulkmail/
 /bulkmail
 /target
 /classes
