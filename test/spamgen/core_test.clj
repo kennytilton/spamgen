@@ -16,14 +16,9 @@
   (profile
     {:dynamic? true}
 
-    (let [rec-ct 10000]
-      (p :devtest-solo
-        (email-stream-to-sendfiles
-          (email-records-test-gen rec-ct)))
-
-      (p :devtest-mp
-        (email-stream-to-sendfiles-mp
-          (email-records-test-gen rec-ct)))))
+    (p :devtest-mp
+      (email-stream-to-sendfiles-mp
+        (email-records-test-gen 4000))))
   (pln :devtest-fini))
 
 ;; todo add tests to read back in output and confirm constraints met

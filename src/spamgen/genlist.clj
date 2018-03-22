@@ -34,7 +34,7 @@
        (gen/fmap (fn [msg] (str "Hi! Buy " msg " at half off!"))))))
 
 (s/def ::spam-score
-  (s/double-in :min 0 :max 1))
+  (s/double-in :min 0.04 :max 1))
 
 (s/def ::email-record
   (s/keys :req-un [::email-address ::email-body ::spam-score]))

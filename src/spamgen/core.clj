@@ -21,50 +21,45 @@
     :validate [#(<= 1 %) "Must be a number greater than one (1)"]]
 
    ;; todo implement dumping
-   #_
-   ["-d" "--dump DUMPCOUNT" "Number of output email records to dump, per target IP"
-    ;;:default 10
-    :parse-fn #(Integer/parseInt %)
-    :validate [#(<= 1 %) "Must be a number greater than one (1) if specified"]]
+   #_["-d" "--dump DUMPCOUNT" "Number of output email records to dump, per target IP"
+      ;;:default 10
+      :parse-fn #(Integer/parseInt %)
+      :validate [#(<= 1 %) "Must be a number greater than one (1) if specified"]]
 
-   ["-m" "--multip"
+   #_ ["-m" "--multip"
     :desc "Run through multiple workers, albeit a tad slower for now"]
 
    ["-h" "--help"]])
 
-(def ^:dynamic *env*
+(def env-hack
+  ;; todo persuade lein bin and config to work together
   {
-   :smtp ["1.2.3.4" "10.20.30.40" "100.200.101.201"
-          "11.22.33.44" "111.112.113.114" "22.33.44.55"]
-   :worker-ct 6
-   :max-individual-spam-score 0.3
-   :max-overall-spam-score 0.05
-   :running-mean-max 0.1
-   :running-mean-span 100
-   :total-email-ct 100
+   :smtp              ["1.2.3.4" "10.20.30.40" "100.200.101.201"
+                       "11.22.33.44" "111.112.113.114" "22.33.44.55"]
+   :worker-ct         6
+   :individual-max    0.3
+   :overall-mean-max  0.05
+   :last-n-mean-max   0.1
+   :last-n-span       100
    :bulkmail-out-path "bulkmail"
    })
 
-(declare pln email-stream-to-sendfiles-mp email-stream-to-sendfiles)
+(declare pln email-stream-to-sendfiles-mp )
 
-#_
-    (-main "-t10")
+#_(-main "-t10")
+
 (defn -main [& args]
   ;; uncomment during development so errors get through when async in play
-  #_ (Thread/setDefaultUncaughtExceptionHandler
-    (reify Thread$UncaughtExceptionHandler
-      (uncaughtException [_ thread ex]
-        (log/error {:what      :uncaught-exception
-                    :exception ex
-                    :where     (str "Uncaught exception on" (.getName thread))}))))
+  #_(Thread/setDefaultUncaughtExceptionHandler
+      (reify Thread$UncaughtExceptionHandler
+        (uncaughtException [_ thread ex]
+          (log/error {:what      :uncaught-exception
+                      :exception ex
+                      :where     (str "Uncaught exception on" (.getName thread))}))))
 
   (let [input (cli/parse-opts args spamgen-cli)
         {:keys [options arguments summary errors]} input
         {:keys [multip test-count help]} options]
-
-    #_ (do
-         (pln :inp input)
-         (pln :options options))
 
     (cond
       errors (doseq [e errors]
@@ -73,10 +68,8 @@
       help (println "\nUsage:\n\n    spamgen <input-edn> options*\n\n"
              "Options:\n" (subs summary 1))
 
-      :default ((if multip email-stream-to-sendfiles-mp
-                       email-stream-to-sendfiles)
-                 (email-records-test-gen test-count))
-      ))
+      :default (email-stream-to-sendfiles-mp
+                 (email-records-test-gen test-count))))
 
   ;; WARNING: comment this out for use with REPL. Necessary, to
   ;; get standalone version to exit reliably.
@@ -86,7 +79,7 @@
 
 (declare email-stream-to-sendfiles
   emw-email-consider
-  running-mean-ok?
+  span-mean-ok
   edn-dump pln)
 
 (defn email-batch-to-sendfiles [batch-input-path]
@@ -112,26 +105,26 @@
                         :ch        (chan)
                         :addrs-hit em-addrs-hit
                         :out-file  (str
-                                     (:bulkmail-out-path *env*) "/"
+                                     (:bulkmail-out-path env-hack) "/"
                                      smtp-ip ".txt")
-                        :stats     (atom {:em-ct        0
-                                          :running-mean 0
-                                          :score-sum    0})})
+                        :stats     (atom {:em-ct              0
+                                          :last-n-mean        0
+                                          :spam-score-sum     0
+                                          :rejected-abs       0
+                                          :rejected-dup-addr  0
+                                          :rejected-overall-mean   0
+                                          :rejected-span-mean 0})})
                   (range)
-                  (take (min (count (:smtp *env*))
-                          (:worker-ct *env*))
-                    (:smtp *env*)))
+                  (take (min (count (:smtp env-hack))
+                          (:worker-ct env-hack))
+                    (:smtp env-hack)))
 
         work-procs (dorun
                      (map (fn [w]
                             (go-loop []
-                              (if-let [task (<! (:ch w))]
-                                (do
-                                  (emw-email-consider w task)
-                                  (recur))
-                                (do
-                                  (pln :worker-fini (:id w))
-                                  [:fini (:id w)]))))
+                              (when-let [task (<! (:ch w))]
+                                (emw-email-consider w task)
+                                (recur))))
                        workers))]
 
     ;; --- initialize spit files for latter appends, including now a header
@@ -162,46 +155,12 @@
                          ([r] r))]
           (recur rp))))
 
+    (doseq [w workers]
+      (pln :stats @(:stats w)))
+
     (println :fini)
 
     #_(doseq [w workers]
-        (edn-dump (:out-file w)))))
-
-(defn email-stream-to-sendfiles
-  "[email-stream (coll)] Produce one output file suitable
-  for one SMTP server, constraining the sequence of emails
-  in each to honor spam score constraints specified in config.edn
-  and never to include two emails to the same address."
-  [email-stream]
-
-  (let [em-addrs-hit (ref #{})
-        workers (doall
-                  (map (fn [id smtp-ip]
-                       {:id        id
-                        :smtp-ip   smtp-ip
-                        :addrs-hit em-addrs-hit
-                        :out-file  (str
-                                     (:bulkmail-out-path *env*) "/"
-                                     smtp-ip ".txt")
-                        :stats     (atom {:em-ct        0
-                                          :running-mean 0
-                                          :score-sum    0})})
-                  (range)
-                  (take 1 (:smtp *env*))))]
-
-    ;; --- initialize spit files for latter appends, including now a header
-
-    (doseq [w workers]
-      (spit (:out-file w)
-        {:run-date (.toString (java.util.Date.))
-         :smtp-ip  (:smtp-ip w)}))
-
-    (doseq [em email-stream]
-      (emw-email-consider (first workers) em))
-
-    (println :fini)
-
-    #_ (doseq [w workers]
         (edn-dump (:out-file w)))))
 
 (defnp emw-email-consider
@@ -215,45 +174,56 @@
 
   [w task]
 
-  #_ (pln :consider task @(:stats w)
-    :max-score (:max-individual-spam-score *env*))
+  ;; (pln :consider (:spam-score task))
 
   (cond
-    (> (:spam-score task) (:max-individual-spam-score *env*))
-    (do #_(pln :email-indy-bad :w (:id w) :score (:spam-score task)))
+    (> (:spam-score task) (:individual-max env-hack))
+    (do
+      (swap! (:stats w) update-in [:rejected-abs] inc)
+      #_ (pln :email-indy-bad :w (:id w) :score (:spam-score task)))
 
     :default
     (let [stats @(:stats w)
-          new-sum (+ (:spam-score task) (:score-sum stats))
+          new-sum (+ (:spam-score task) (:spam-score-sum stats))
           new-ct (inc (:em-ct stats))]
       (cond
-        (> (/ new-sum new-ct)
-          (:max-overall-spam-score *env*))
-        (do #_(pln :overall-email-mean-bad :w (:id w) :score (:spam-score task)
+        ;; do not apply test until sample size useful,
+        ;; arbitrarily adopting :last-n parameter as useful
+        (and (> new-ct (:last-n-span env-hack))
+          (> (/ new-sum new-ct)
+          (:overall-mean-max env-hack)))
+        (do (swap! (:stats w) update-in [:rejected-overall-mean] inc)
+            #_ (pln :overall-email-mean-bad :score (:spam-score task)
                 :new-mean (/ new-sum new-ct)
-                :limit (:max-overall-spam-score *env*)))
+                :limit (:overall-mean-max env-hack)))
 
-        (not (p :running-mean (running-mean-ok? w (:spam-score task))))
+        (not (p :span-mean (span-mean-ok w (:spam-score task))))
         ;; todo save to "try later" array to be possibly
         ;; incorporated later when running mean might drop
-        (do (pln :running-mean-bad (:spam-score task)))
+        (do (swap! (:stats w) update-in [:rejected-span-mean] inc)
+            #_ (pln :span-mean-bad (:spam-score task)))
 
         :default
         (when (dosync
                 ;; todo make sure addr key matches generator when testing
                 ;; or work out how to normalize keys in spec
                 (let [addr (:email-address task)]
-                  (when-not (get @(:addrs-hit w) addr)
-                    (alter (:addrs-hit w) conj addr)
-                    true)))
-          (swap! (:stats w) merge {:em-ct     new-ct
-                                   :score-sum new-sum})
+                  (if (get @(:addrs-hit w) addr)
+                    (do
+                      (swap! (:stats w) update-in [:rejected-dup-addr] inc)
+                      false)
+                    (do
+                      (alter (:addrs-hit w) conj addr)
+                      true))))
+          (swap! (:stats w) merge {:em-ct          new-ct
+                                   :spam-score-sum new-sum})
 
           ;;; todo batch spits instead of spitting individually?
-          ;; (pln :sending-to (:id w) (:email-address task))
+          #_ (pln :sending-to (:id w) (:spam-score task)
+            :mean (/ new-sum new-ct))
           (spit (:out-file w) task :append true))))))
 
-(defn running-mean-ok?
+(defn span-mean-ok
   "[w (writer) new-score (score of email being considered)]
   Decide if this new score, if included, will violate running mean score
   invariants specified in config.edn"
@@ -261,16 +231,20 @@
   [w new-score]
 
   (let [stats @(:stats w)
-        running-mean (:running-mean stats)
+        last-n-mean (:last-n-mean stats)
         new-ct (min
-                 (:running-mean-span *env*)
+                 (:last-n-span env-hack)
                  (inc (:em-ct stats)))
-        new-mean (+ running-mean
-                   (/ (- new-score running-mean) new-ct))]
-    (when (<= new-mean (:running-mean-max *env*))
-      (swap! (:stats w) merge {:em-ct        new-ct
-                               :running-mean new-mean})
-      true)))
+        new-mean (+ last-n-mean
+                   (/ (- new-score last-n-mean) new-ct))]
+    (if (<= new-mean (:last-n-mean-max env-hack))
+      (do
+        (swap! (:stats w) assoc :last-n-mean new-mean)
+        #_ (pln :okspan new-ct new-mean new-score (:last-n-mean-max env-hack))
+        true)
+      (do
+        #_ (pln :failspan new-ct new-mean (:last-n-mean-max env-hack))
+        false))))
 
 ;;; --- utilities -------------------------------------------------
 
