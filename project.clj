@@ -18,4 +18,5 @@
 
   :profiles {:uberjar {:aot :all}
              :prod {:resource-paths ["config/prod"]}
-             :dev  {:resource-paths ["config/dev"]}})
+             :dev  {:resource-paths ["config/dev"]
+                    :plugins [[lein-binplus "0.6.4"]]}})
