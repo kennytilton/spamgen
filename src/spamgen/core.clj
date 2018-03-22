@@ -58,18 +58,11 @@
                     :exception ex
                     :where     (str "Uncaught exception on" (.getName thread))}))))
 
-  (pln :config!!! (select-keys *env* [:smtp  :worker-ct
-                                    :max-individual-spam-score
-                                    :max-overall-spam-score
-                                    :running-mean-max
-                                    :running-mean-span
-                                    :total-email-ct
-                                    :bulkmail-out-path ]))
   (let [input (cli/parse-opts args spamgen-cli)
         {:keys [options arguments summary errors]} input
         {:keys [multip test-count help]} options]
 
-    (do
+    #_ (do
          (pln :inp input)
          (pln :options options))
 
@@ -88,7 +81,7 @@
   ;; WARNING: comment this out for use with REPL. Necessary, to
   ;; get standalone version to exit reliably.
   ;;
-  ;;(shutdown-agents)
+  (shutdown-agents)
   )
 
 (declare email-stream-to-sendfiles
