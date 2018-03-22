@@ -27,15 +27,22 @@ If you now examine the directory `bulkmail` you should see a bunch of files name
 
 The idea is that in parallel we cannot enforce sequential constraints, so the plan is to send each output file from a different SMTP server with the IPs shown.
 
-Mind you, my paralellization is actually a bit slower than just running one one thread. Still working on that.
+Mind you, my paralellization is actually a bit slower than just running one one thread. Still working on that. To run single-threaded:
+````
+./spamgen -t1000
+````
+It is the default.
 
 ## Options
 
-Try: `bin/spamgen -h`
+Try: `./spamgen -h`
 
 ### Bugs
 
 Running in parallel (the `-m` option) is a tad slower. Investigating.
+
+## Future work
+Write a similar program to pull in the output files and validate that all constraints have in fact been observed, as our testing during development confirmed.
 
 ## License
 
