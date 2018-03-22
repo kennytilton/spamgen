@@ -14,42 +14,51 @@
 
 (def spamgen-cli
   [["-t" "--test TESTCOUNT" "Number of test email records to process ignoring file arg"
-    ;;:default 100
+    :id :test-count
+    :default 100
+    ;; todo handle inputs like 100k
     :parse-fn #(Integer/parseInt %)
     :validate [#(<= 1 %) "Must be a number greater than one (1)"]]
 
+   ;; todo implement dumping
+   #_
    ["-d" "--dump DUMPCOUNT" "Number of output email records to dump, per target IP"
     ;;:default 10
     :parse-fn #(Integer/parseInt %)
     :validate [#(<= 1 %) "Must be a number greater than one (1) if specified"]]
 
+   ["-m" "--multip"
+    :desc "Run through multiple workers, albeit a tad slower for now"]
+
    ["-h" "--help"]])
 
-(declare pln)
+(declare pln email-stream-to-sendfiles-mp email-stream-to-sendfiles)
 
-#_(-main "-h")
-
-#_(-main "bulkinput/emf-1000.edn" "-t100" "-d10")
-
-#_(-main "bulkinput/emf-10.edn" "-h" "-t42")
-
+#_
+    (-main "-t10")
 (defn -main [& args]
   ;; uncomment during development so errors get through when async in play
-  (Thread/setDefaultUncaughtExceptionHandler
+  #_ (Thread/setDefaultUncaughtExceptionHandler
     (reify Thread$UncaughtExceptionHandler
       (uncaughtException [_ thread ex]
         (log/error {:what      :uncaught-exception
                     :exception ex
                     :where     (str "Uncaught exception on" (.getName thread))}))))
 
-  (pln :main args)
-
+  (pln :config!!! (select-keys env [:smtp  :worker-ct
+                                    :max-individual-spam-score
+                                    :max-overall-spam-score
+                                    :running-mean-max
+                                    :running-mean-span
+                                    :total-email-ct
+                                    :bulkmail-out-path ]))
   (let [input (cli/parse-opts args spamgen-cli)
         {:keys [options arguments summary errors]} input
-        {:keys [test help]} options]
+        {:keys [multip test-count help]} options]
 
-    (pln :inp input)
-    (pln :options options)
+    (do
+         (pln :inp input)
+         (pln :options options))
 
     (cond
       errors (doseq [e errors]
@@ -58,18 +67,16 @@
       help (println "\nUsage:\n\n    spamgen <input-edn> options*\n\n"
              "Options:\n" (subs summary 1))
 
-      :default (do
-                 #_(email-batch-to-sendfiles <tbd>)
-                 (println :fnyi))
+      :default ((if multip email-stream-to-sendfiles-mp
+                       email-stream-to-sendfiles)
+                 (email-records-test-gen test-count))
       ))
 
   ;; WARNING: comment this out for use with REPL. Necessary, to
   ;; get standalone version to exit reliably.
   ;;
-  ;; (shutdown-agents)
+  ;;(shutdown-agents)
   )
-
-#_(-main)
 
 (declare email-stream-to-sendfiles
   emw-email-consider
@@ -82,20 +89,21 @@
       (email-stream-to-sendfiles
         (take-while (partial not= :fini) edn-seq)))))
 
-(defn email-stream-to-sendfiles
+
+(defn email-stream-to-sendfiles-mp
   "[email-stream (coll)] Produce one or more output files targeted
   for different SMTP servers constraining the sequence of emails
   in each to honor spam score constraints specified in config.edn
   and never to include two emails to the same address across all
   batches."
   [email-stream]
-  (pln :stream! email-stream (first email-stream))
 
+  (println :multiprocessing)
   (let [em-addrs-hit (ref #{})
         workers (map (fn [id smtp-ip]
                        {:id        id
                         :smtp-ip   smtp-ip
-                        :ch        (chan 10)
+                        :ch        (chan)
                         :addrs-hit em-addrs-hit
                         :out-file  (str
                                      (:bulkmail-out-path env) "/"
@@ -153,6 +161,43 @@
     #_(doseq [w workers]
         (edn-dump (:out-file w)))))
 
+(defn email-stream-to-sendfiles
+  "[email-stream (coll)] Produce one output file suitable
+  for one SMTP server, constraining the sequence of emails
+  in each to honor spam score constraints specified in config.edn
+  and never to include two emails to the same address."
+  [email-stream]
+
+  (let [em-addrs-hit (ref #{})
+        workers (doall
+                  (map (fn [id smtp-ip]
+                       {:id        id
+                        :smtp-ip   smtp-ip
+                        :addrs-hit em-addrs-hit
+                        :out-file  (str
+                                     (:bulkmail-out-path env) "/"
+                                     smtp-ip ".txt")
+                        :stats     (atom {:em-ct        0
+                                          :running-mean 0
+                                          :score-sum    0})})
+                  (range)
+                  (take 1 (:smtp env))))]
+
+    ;; --- initialize spit files for latter appends, including now a header
+
+    (doseq [w workers]
+      (spit (:out-file w)
+        {:run-date (.toString (java.util.Date.))
+         :smtp-ip  (:smtp-ip w)}))
+
+    (doseq [em email-stream]
+      (emw-email-consider (first workers) em))
+
+    (println :fini)
+
+    #_ (doseq [w workers]
+        (edn-dump (:out-file w)))))
+
 (defnp emw-email-consider
   "[w (writer) task (email info)]
   Decide whether this writer should include this email in
@@ -163,6 +208,9 @@
   Simply write to the writer's batch or ignore. Output is meaningless."
 
   [w task]
+
+  (pln :consider task @(:stats w)
+    :max-score (:max-individual-spam-score env))
 
   (cond
     (> (:spam-score task) (:max-individual-spam-score env))
@@ -195,7 +243,7 @@
           (swap! (:stats w) merge {:em-ct     new-ct
                                    :score-sum new-sum})
 
-          ;;; todo batch spits instead of spitting individually
+          ;;; todo batch spits instead of spitting individually?
           ;; (pln :sending-to (:id w) (:email-address task))
           (spit (:out-file w) task :append true))))))
 
@@ -227,18 +275,7 @@
     (doseq [em (email-records-test-gen em-count)]
       (spit bf em :append true))))
 
-(defn bulk-input-sequence [path handler]
-  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader path))]
-    (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
-      (dorun (map handler (take-while (partial not= :fini) edn-seq))))))
-
-;; (bulk-input-sequence "bulkinput/emf-10.edn" println)
-
 #_(bulk-input-build "emf" 100)
-
-(defn edn-load [path]
-  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader path))]
-    (edn/read in)))
 
 (defn edn-dump                                              ;; todo turn into validator
   ([path]

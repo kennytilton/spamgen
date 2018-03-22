@@ -13,14 +13,22 @@
 (tufte/add-basic-println-handler! {})
 
 (deftest devtest
-    (profile
-      {:dynamic? true}
+  (profile
+    {:dynamic? true}
 
-      (p :top-main
+    (let [rec-ct 10000]
+      (p :devtest-solo
         (email-stream-to-sendfiles
-          (email-records-test-gen 40000)))))
+          (email-records-test-gen rec-ct)))
 
-#_(deftest infile-bath-edn
+      (p :devtest-mp
+        (email-stream-to-sendfiles-mp
+          (email-records-test-gen rec-ct)))))
+  (pln :devtest-fini))
+
+;; todo add tests to read back in output and confirm constraints met
+
+#_(deftest infile-batch-edn
     (email-batch-to-sendfiles "bulkinput/emf-1000.edn")
     #_(with-open [in (java.io.PushbackReader. (clojure.java.io/reader "bulkinput/emf-1000.edn"))]
         (pln :ednin in)
@@ -28,7 +36,7 @@
           (pln :eseq (take-while (partial not= :fini) edn-seq))
           (email-batch-to-sendfiles (take-while (partial not= :fini) edn-seq)))))
 
-(deftest infile-stream-edn
+#_(deftest infile-stream-edn
     (with-open [in (java.io.PushbackReader. (clojure.java.io/reader "bulkinput/emf-100.edn"))]
       (pln :ednin in)
       (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
