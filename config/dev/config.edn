@@ -1,0 +1,11 @@
+{
+ :smtp ["1.2.3.4" "10.20.30.40" "100.200.101.201"
+        "11.22.33.44" "111.112.113.114" "22.33.44.55"]
+ :worker-ct 6
+ :max-individual-spam-score 0.3
+ :max-overall-spam-score 0.05
+ :running-mean-max 0.1
+ :running-mean-span 100
+ :total-email-ct 100
+ :bulkmail-out-path "bulkmail"
+ }
