@@ -5,18 +5,61 @@
     [clojure.core.async :refer [chan go-loop <! <!! >!!
                                 timeout alt!!]]
     [taoensso.tufte :as tufte :refer (defnp p profiled profile)]
+    [clojure.tools.cli :refer [parse-opts] :as cli]
+    ;; [clojure.java.io :as io]
+    [taoensso.timbre :as log]
     [clojure.string :as str]
     [clojure.edn :as edn]
     [spamgen.genlist :refer :all]))
 
+(def spamgen-cli
+  [["-t" "--test TESTCOUNT" "Number of test email records to process ignoring file arg"
+    :default 100
+    :parse-fn #(Integer/parseInt %)
+    :validate [#(<= 1 %) "Must be a number greater than one (1)"]]
+
+   ;; A boolean option defaulting to nil
+   ["-h" "--help"]]
+  )
+(declare pln)
+
+#_
+    (-main "bulkinput/emf-10.edn" "-h")
+
+#_ (-main "bulkinput/emf-10.edn" "-h" "-t42")
+
 (defn -main [& args]
+  ;; #_ ;; uncomment during development so errors get through when async in play
+      (Thread/setDefaultUncaughtExceptionHandler
+        (reify Thread$UncaughtExceptionHandler
+          (uncaughtException [_ thread ex]
+            (log/error {:what :uncaught-exception
+                        :exception ex
+                        :where (str "Uncaught exception on" (.getName thread))}))))
 
-  (println :workers (:worker-ct env) :smtps (:smtp env))
+  (pln :main args )
 
-  ;; todo work out production stream
+  (let [input (cli/parse-opts args spamgen-cli)
+        {:keys [options arguments summary errors]} input
+        {:keys [  test help]} options]
 
-  ;; (email-batch-to-sendfiles <tbd>)
+    (pln :inp input)
+    (pln :options options)
 
+    (cond
+      errors (doseq [e errors]
+               (println e))
+
+      help (println "\nUsage:\n\n    spamgen <input-edn> options*\n\n"
+             "Options:\n" (subs summary 1))
+
+      :default (do
+                 #_ (email-batch-to-sendfiles <tbd>)
+                 (println :fnyi))
+      ))
+
+  ;; WARNING: comment this out for use with REPL
+  ;;(shutdown-agents)
   )
 
 #_(-main)
