@@ -15,10 +15,9 @@
 (deftest devtest
   (profile
     {:dynamic? true}
-
     (p :devtest-mp
       (email-stream-to-sendfiles-mp
-        (email-records-test-gen 4000))))
+        (email-records-test-gen 100))))
   (pln :devtest-fini))
 
 ;; todo add tests to read back in output and confirm constraints met
@@ -40,8 +39,3 @@
         #_(doseq [erec (take-while (partial not= :fini) edn-seq)]
             (pln :erec erec))
         (pln :infile-stream-edn-fini))))
-
-
-#_(deftest devtest-duped
-    (email-batch-to-sendfiles
-      (email-records-duped-test-gen (:total-email-ct env))))

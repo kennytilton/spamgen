@@ -2,14 +2,14 @@
   (:gen-class)
   (:require
     [config.core :refer [env]]
+    [clojure.string :as str]
+    [clojure.pprint :as pp]
+    [clojure.edn :as edn]
     [clojure.core.async :refer [chan go-loop <! <!! >!!
                                 timeout alt!!]]
-    [taoensso.tufte :as tufte :refer (defnp p profiled profile)]
     [clojure.tools.cli :refer [parse-opts] :as cli]
-    ;; [clojure.java.io :as io]
+    [taoensso.tufte :as tufte :refer (defnp p profiled profile)]
     [taoensso.timbre :as log]
-    [clojure.string :as str]
-    [clojure.edn :as edn]
     [spamgen.genlist :refer :all]))
 
 (def spamgen-cli
@@ -74,7 +74,7 @@
   ;; WARNING: comment this out for use with REPL. Necessary, to
   ;; get standalone version to exit reliably.
   ;;
-  (shutdown-agents)
+  ;;(shutdown-agents)
   )
 
 (declare email-stream-to-sendfiles
@@ -90,7 +90,9 @@
 
 
 (defn email-stream-to-sendfiles-mp
-  "[email-stream (coll)] Produce one or more output files targeted
+  "[email-stream (coll)]
+
+  Produce one or more output files targeted
   for different SMTP servers constraining the sequence of emails
   in each to honor spam score constraints specified in config.edn
   and never to include two emails to the same address across all
@@ -105,7 +107,7 @@
                         :ch        (chan)
                         :addrs-hit em-addrs-hit
                         :out-file  (str
-                                     (:bulkmail-out-path env-hack) "/"
+                                     (:bulkmail-out-path env-hack) "/em"
                                      smtp-ip ".txt")
                         :stats     (atom {:em-ct              0
                                           :last-n-mean        0
@@ -129,14 +131,10 @@
 
     ;; --- initialize spit files for latter appends, including now a header
 
-    (pln :spit-init)
-
     (doseq [w workers]
       (spit (:out-file w)
         {:run-date (.toString (java.util.Date.))
          :smtp-ip  (:smtp-ip w)}))
-
-    (pln :feeding)
 
     (p :feed-workers
       (dorun
@@ -147,17 +145,28 @@
 
     (pln :waiting-on-workers)
 
-    (loop [[p1 & rp :as ps] work-procs]
-      (when p1
+    (loop [[work-proc & rest :as ps] work-procs]
+      (when work-proc
         (when-let [out (alt!!
                          (timeout 100) :timeout
-                         p1
-                         ([r] r))]
-          (recur rp))))
+                         work-proc ([r] r))]
+          (recur rest))))
 
     (doseq [w workers]
-      (pln :stats @(:stats w)))
+      (pln)
+      (pln (format "worker %d:" (:id w)))
+      (pp/pprint @(:stats w))
+      (pln))
 
+    (pln :summary)
+    (pp/pprint (apply merge-with +
+           (map #(select-keys @(:stats %)
+                   [:em-ct :rejected-abs :rejected-dup-addr
+                    :rejected-overall-mean
+                    :rejected-span-mean])
+             workers)))
+
+    (pln)
     (println :fini)
 
     #_(doseq [w workers]

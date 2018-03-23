@@ -69,4 +69,6 @@
   ([] (repeatedly
         #(gen/generate (s/gen ::email-record-duped))))
   ([n]
-   (take n (email-records-duped-test-gen))))
+   (if (nil? n)
+     (email-records-duped-test-gen)
+     (take n (email-records-duped-test-gen)))))
