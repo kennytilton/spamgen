@@ -19,15 +19,7 @@
     ;; todo handle inputs like 100k
     :parse-fn #(Integer/parseInt %)
     :validate [#(<= 1 %) "Must be a number greater than one (1)"]]
-
-   ;; todo implement dumping
-   #_["-d" "--dump DUMPCOUNT" "Number of output email records to dump, per target IP"
-      ;;:default 10
-      :parse-fn #(Integer/parseInt %)
-      :validate [#(<= 1 %) "Must be a number greater than one (1) if specified"]]
-
-   #_ ["-m" "--multip"
-    :desc "Run through multiple workers, albeit a tad slower for now"]
+   ["-v" "--verbose"]
 
    ["-h" "--help"]])
 
@@ -44,9 +36,9 @@
    :bulkmail-out-path "bulkmail"
    })
 
-(declare pln email-stream-to-sendfiles-mp )
+(declare pln email-stream-to-sendfiles-mp)
 
-#_(-main "-t10")
+#_(-main "-t30000" "-v")
 
 (defn -main [& args]
   ;; uncomment during development so errors get through when async in play
@@ -59,7 +51,7 @@
 
   (let [input (cli/parse-opts args spamgen-cli)
         {:keys [options arguments summary errors]} input
-        {:keys [multip test-count help]} options]
+        {:keys [verbose test-count help]} options]
 
     (cond
       errors (doseq [e errors]
@@ -69,7 +61,8 @@
              "Options:\n" (subs summary 1))
 
       :default (email-stream-to-sendfiles-mp
-                 (email-records-test-gen test-count))))
+                 (email-records-test-gen test-count)
+                 verbose)))
 
   ;; WARNING: comment this out for use with REPL. Necessary, to
   ;; get standalone version to exit reliably.
@@ -97,9 +90,8 @@
   in each to honor spam score constraints specified in config.edn
   and never to include two emails to the same address across all
   batches."
-  [email-stream]
+  [email-stream verbose]
 
-  (println :multiprocessing)
   (let [em-addrs-hit (ref #{})
         workers (map (fn [id smtp-ip]
                        {:id        id
@@ -109,13 +101,13 @@
                         :out-file  (str
                                      (:bulkmail-out-path env-hack) "/em"
                                      smtp-ip ".txt")
-                        :stats     (atom {:em-ct              0
-                                          :last-n-mean        0
-                                          :spam-score-sum     0
-                                          :rejected-abs       0
-                                          :rejected-dup-addr  0
-                                          :rejected-overall-mean   0
-                                          :rejected-span-mean 0})})
+                        :stats     (atom {:sent-ct                 0
+                                          :last-n-mean           0
+                                          :spam-score-sum        0
+                                          :rejected-score        0
+                                          :rejected-dup-addr     0
+                                          :rejected-overall-mean 0
+                                          :rejected-span-mean    0})})
                   (range)
                   (take (min (count (:smtp env-hack))
                           (:worker-ct env-hack))
@@ -152,19 +144,20 @@
                          work-proc ([r] r))]
           (recur rest))))
 
-    (doseq [w workers]
-      (pln)
-      (pln (format "worker %d:" (:id w)))
-      (pp/pprint @(:stats w))
-      (pln))
+    (when verbose
+      (doseq [w workers]
+        (pln)
+        (pln (format "worker %d:" (:id w)))
+        (pp/pprint @(:stats w))
+        (pln)))
 
     (pln :summary)
     (pp/pprint (apply merge-with +
-           (map #(select-keys @(:stats %)
-                   [:em-ct :rejected-abs :rejected-dup-addr
-                    :rejected-overall-mean
-                    :rejected-span-mean])
-             workers)))
+                 (map #(select-keys @(:stats %)
+                         [:sent-ct :rejected-score :rejected-dup-addr
+                          :rejected-overall-mean
+                          :rejected-span-mean])
+                   workers)))
 
     (pln)
     (println :fini)
@@ -183,26 +176,23 @@
 
   [w task]
 
-  ;; (pln :consider (:spam-score task))
+  ;;(pln :consider (:spam-score task)(:email-address task))
 
   (cond
     (> (:spam-score task) (:individual-max env-hack))
     (do
-      (swap! (:stats w) update-in [:rejected-abs] inc)
-      #_ (pln :email-indy-bad :w (:id w) :score (:spam-score task)))
+      (swap! (:stats w) update-in [:rejected-score] inc)
+      #_(pln :email-indy-bad :w (:id w) :score (:spam-score task)))
 
     :default
     (let [stats @(:stats w)
           new-sum (+ (:spam-score task) (:spam-score-sum stats))
-          new-ct (inc (:em-ct stats))]
+          new-ct (inc (:sent-ct stats))]
       (cond
-        ;; do not apply test until sample size useful,
-        ;; arbitrarily adopting :last-n parameter as useful
-        (and (> new-ct (:last-n-span env-hack))
-          (> (/ new-sum new-ct)
-          (:overall-mean-max env-hack)))
+        (> (/ new-sum new-ct)
+          (:overall-mean-max env-hack))
         (do (swap! (:stats w) update-in [:rejected-overall-mean] inc)
-            #_ (pln :overall-email-mean-bad :score (:spam-score task)
+            #_(pln :overall-email-mean-bad :score (:spam-score task)
                 :new-mean (/ new-sum new-ct)
                 :limit (:overall-mean-max env-hack)))
 
@@ -210,7 +200,7 @@
         ;; todo save to "try later" array to be possibly
         ;; incorporated later when running mean might drop
         (do (swap! (:stats w) update-in [:rejected-span-mean] inc)
-            #_ (pln :span-mean-bad (:spam-score task)))
+            #_(pln :span-mean-bad (:spam-score task)))
 
         :default
         (when (dosync
@@ -224,12 +214,12 @@
                     (do
                       (alter (:addrs-hit w) conj addr)
                       true))))
-          (swap! (:stats w) merge {:em-ct          new-ct
+          (swap! (:stats w) merge {:sent-ct          new-ct
                                    :spam-score-sum new-sum})
 
           ;;; todo batch spits instead of spitting individually?
-          #_ (pln :sending-to (:id w) (:spam-score task)
-            :mean (/ new-sum new-ct))
+          #_(pln :sending-to (:id w) (:spam-score task)
+              :mean (/ new-sum new-ct))
           (spit (:out-file w) task :append true))))))
 
 (defn span-mean-ok
@@ -243,16 +233,16 @@
         last-n-mean (:last-n-mean stats)
         new-ct (min
                  (:last-n-span env-hack)
-                 (inc (:em-ct stats)))
+                 (inc (:sent-ct stats)))
         new-mean (+ last-n-mean
                    (/ (- new-score last-n-mean) new-ct))]
     (if (<= new-mean (:last-n-mean-max env-hack))
       (do
         (swap! (:stats w) assoc :last-n-mean new-mean)
-        #_ (pln :okspan new-ct new-mean new-score (:last-n-mean-max env-hack))
+        #_(pln :okspan new-ct new-mean new-score (:last-n-mean-max env-hack))
         true)
       (do
-        #_ (pln :failspan new-ct new-mean (:last-n-mean-max env-hack))
+        #_(pln :failspan new-ct new-mean (:last-n-mean-max env-hack))
         false))))
 
 ;;; --- utilities -------------------------------------------------

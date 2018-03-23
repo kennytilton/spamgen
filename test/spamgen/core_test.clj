@@ -17,7 +17,8 @@
     {:dynamic? true}
     (p :devtest-mp
       (email-stream-to-sendfiles-mp
-        (email-records-test-gen 100))))
+        (email-records-test-gen 10000)
+        true)))
   (pln :devtest-fini))
 
 ;; todo add tests to read back in output and confirm constraints met
