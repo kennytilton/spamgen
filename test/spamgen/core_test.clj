@@ -103,8 +103,8 @@
     (is (= 15 (no-can-dart 3 board)))))
 
 #_
-(let [chunk 5
-      total 60]
+(let [chunk 100
+      total 40000]
   (let [chunks (partition-all chunk
                  (email-records-test-gen total))]
     (dorun
@@ -128,7 +128,7 @@
     {:dynamic? true}
     (p :devtest-mp
       (email-file-to-sendfiles-mp
-        "bulkinput/em-60-5.edn"
+        "bulkinput/em-1000000-100.edn"
         false)))
   (pln :devtest-fini))
 
@@ -147,8 +147,7 @@
     (p :test-gen-count
       (let [test (email-records-test-gen 10000)]
         (pln :testing!)
-        (count test))
-      )))
+        (count test)))))
 
 (deftest test-gen-apit
   (profile

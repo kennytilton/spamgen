@@ -99,6 +99,7 @@
                         :smtp-ip   smtp-ip
                         :ch        shared-chan
                         :spit-chan spit-chan
+                        :out-buff (atom nil)
                         :addrs-hit em-addrs-hit
                         :spit-file (str
                                      (:bulkmail-out-path env-hack) "/em-"
@@ -135,14 +136,16 @@
 
     ;; --- start the spitter ---------------------------------------
 
-    (let [spitter (p :spitting
+    (let [spitters
+          nil #_ (doall (for [_ (range 5)]
+            (p :spitting
                     (go-loop []
                       (if-let [x (<! spit-chan)]
                         (let [[spit-file em] x]
                           (xpln :sptting spit-file em)
                           (spit spit-file em :append true)
                           (recur))
-                        (pln :spitter-out!!!!))))]
+                        (pln :spitter-out!!!!))))))]
 
       ;; --- feed the workers ----------------------------------------
 
@@ -165,11 +168,12 @@
             (pln :bam-worker-out work-proc)
             (recur rest))))
 
-      (pln :waitingonspitter)
+      (pln :waitingonspitterc)
+      (doseq [spitter spitters]
       (when-let [out (alt!!
                        (timeout 1000) :timeout
                        spitter ([r] r))]
-        (print :spitwait out))
+        (print :spitwait out)))
 
       ;; --- dump worker stats ---------------------------------------
 
@@ -246,8 +250,13 @@
 
           (xpln :sending-to (:spit-chan w) [(:spit-file w) task])
 
+          (when (>= (count @(:out-buff w)) 100)
+              (spit (:spit-file w) @(:out-buff w) :append true)
+              (reset! (:out-buff w) nil))
 
-          (>!! (:spit-chan w)
+          (swap! (:out-buff w) conj task)
+
+          #_ (>!! (:spit-chan w)
             [(:spit-file w) task]))))))
 
 (defn span-mean-ok
