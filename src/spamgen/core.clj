@@ -92,15 +92,18 @@
   [em-file verbose]
 
   (let [em-addrs-hit (ref #{})
-        shared-chan (chan 100)
+        shared-chan (chan)
+        spit-chan (chan)
         workers (map (fn [id smtp-ip]
                        {:id        id
                         :smtp-ip   smtp-ip
                         :ch        shared-chan
+                        :spit-chan spit-chan
                         :addrs-hit em-addrs-hit
-                        :out-file  (str
-                                     (:bulkmail-out-path env-hack) "/em"
-                                     smtp-ip ".txt")
+                        :spit-file (str
+                                     (:bulkmail-out-path env-hack) "/em-"
+                                     smtp-ip ".edn")
+
                         :stats     (atom {:sent-ct               0
                                           :last-n-mean           0
                                           :spam-score-sum        0
@@ -117,53 +120,77 @@
                      (map (fn [w]
                             (go-loop []
                               (when-let [em-chunk (<! (:ch w))]
+                                ;;(pln :got-chunk (count em-chunk))
                                 (doseq [em em-chunk]
                                   (emw-email-consider w em))
                                 (recur))))
                        workers))]
 
-    ;; --- initialize spit files for latter appends, including now a header
+    ;; --- initialize spit files with a header ----------------------
 
     (doseq [w workers]
-      (spit (:out-file w)
+      (spit (:spit-file w)
         {:run-date (.toString (java.util.Date.))
          :smtp-ip  (:smtp-ip w)}))
 
-    (p :feed-workers
-      (with-open [in (java.io.PushbackReader. (clojure.java.io/reader em-file))]
+    ;; --- start the spitter ---------------------------------------
+
+    (let [spitter (p :spitting
+                    (go-loop []
+                      (if-let [x (<! spit-chan)]
+                        (let [[spit-file em] x]
+                          (xpln :sptting spit-file em)
+                          (spit spit-file em :append true)
+                          (recur))
+                        (pln :spitter-out!!!!))))]
+
+      ;; --- feed the workers ----------------------------------------
+
+      (p :feed-workers
+        (with-open [in (java.io.PushbackReader. (clojure.java.io/reader em-file))]
           (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
             (doseq [em-chunk (take-while (partial not= :fini) edn-seq)]
+              (xpln :chunk-top)
               (>!! shared-chan em-chunk)))))
 
-    (pln :waiting-on-workers)
+      ;; --- let the workers finish ----------------------------------
 
-    (loop [[work-proc & rest :as ps] work-procs]
-      (when work-proc
-        (when-let [out (alt!!
-                         (timeout 100) :timeout
-                         work-proc ([r] r))]
-          (recur rest))))
+      (pln :waiting-on-workers)
 
-    (when verbose
-      (doseq [w workers]
-        (pln)
-        (pln (format "worker %d:" (:id w)))
-        (pp/pprint @(:stats w))
-        (pln)))
+      (loop [[work-proc & rest :as ps] work-procs]
+        (when work-proc
+          (when-let [out (alt!!
+                           (timeout 100) :timeout
+                           work-proc ([r] r))]
+            (pln :bam-worker-out work-proc)
+            (recur rest))))
 
-    (pln :summary)
-    (pp/pprint (apply merge-with +
-                 (map #(select-keys @(:stats %)
-                         [:sent-ct :rejected-score :rejected-dup-addr
-                          :rejected-overall-mean
-                          :rejected-span-mean])
-                   workers)))
+      (pln :waitingonspitter)
+      (when-let [out (alt!!
+                       (timeout 1000) :timeout
+                       spitter ([r] r))]
+        (print :spitwait out))
 
-    (pln)
-    (println :fini)
+      ;; --- dump worker stats ---------------------------------------
 
-    #_(doseq [w workers]
-        (edn-dump (:out-file w)))))
+      (when verbose
+        (doseq [w workers]
+          (pln)
+          (pln (format "worker %d:" (:id w)))
+          (pp/pprint @(:stats w))
+          (pln)))
+
+      ;; ---- dump summary stats -------------------------------------
+
+      (pp/pprint (apply merge-with +
+                   (map #(select-keys @(:stats %)
+                           [:sent-ct :rejected-score :rejected-dup-addr
+                            :rejected-overall-mean
+                            :rejected-span-mean])
+                     workers)))
+
+      (pln)
+      (println :fini))))
 
 (defnp emw-email-consider
   "[w (writer) task (email info)]
@@ -217,10 +244,11 @@
           (swap! (:stats w) merge {:sent-ct        new-ct
                                    :spam-score-sum new-sum})
 
-          ;;; todo batch spits instead of spitting individually?
-          #_(pln :sending-to (:id w) (:spam-score task)
-              :mean (/ new-sum new-ct))
-          #_(spit (:out-file w) task :append true))))))
+          (xpln :sending-to (:spit-chan w) [(:spit-file w) task])
+
+
+          (>!! (:spit-chan w)
+            [(:spit-file w) task]))))))
 
 (defn span-mean-ok
   "[w (writer) new-score (score of email being considered)]

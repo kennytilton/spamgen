@@ -103,8 +103,8 @@
     (is (= 15 (no-can-dart 3 board)))))
 
 #_
-(let [chunk 1000
-      total 1000000]
+(let [chunk 5
+      total 60]
   (let [chunks (partition-all chunk
                  (email-records-test-gen total))]
     (dorun
@@ -128,7 +128,7 @@
     {:dynamic? true}
     (p :devtest-mp
       (email-file-to-sendfiles-mp
-        "bulkinput/em-100000-100.edn"
+        "bulkinput/em-60-5.edn"
         false)))
   (pln :devtest-fini))
 
