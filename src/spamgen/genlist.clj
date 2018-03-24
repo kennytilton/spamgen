@@ -24,8 +24,6 @@
          (s/gen email-domains))
        (gen/fmap (fn [[addr domain]] (str addr "@" domain))))))
 
-
-
 (s/def ::email-body
   (s/with-gen
     (s/and string?)
@@ -37,7 +35,7 @@
   (s/double-in :min 0.0 :max 1))
 
 (s/def ::email-record
-  (s/keys :req-un [::email-address ::email-body ::spam-score]))
+  (s/keys :req-un [::email-address ::spam-score]))
 
 (defn email-records-test-gen
   ([] (repeatedly
@@ -46,8 +44,6 @@
    (if (nil? n)
      (email-records-test-gen)
      (take n (email-records-test-gen)))))
-
-#_(email-records-test-gen 3)
 
 ;;; --- specs where dups are likely ---------------------
 

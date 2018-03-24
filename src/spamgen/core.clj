@@ -5,7 +5,7 @@
     [clojure.string :as str]
     [clojure.pprint :as pp]
     [clojure.edn :as edn]
-    [clojure.core.async :refer [chan go-loop <! <!! >!!
+    [clojure.core.async :refer [go chan go-loop <! <!! >!! >!
                                 timeout alt!!]]
     [clojure.tools.cli :refer [parse-opts] :as cli]
     [taoensso.tufte :as tufte :refer (defnp p profiled profile)]
@@ -36,7 +36,7 @@
    :bulkmail-out-path "bulkmail"
    })
 
-(declare pln email-stream-to-sendfiles-mp)
+(declare pln xpln email-stream-to-sendfiles-mp)
 
 #_(-main "-t30000" "-v")
 
@@ -81,27 +81,27 @@
       (email-stream-to-sendfiles
         (take-while (partial not= :fini) edn-seq)))))
 
-
-(defn email-stream-to-sendfiles-mp
-  "[email-stream (coll)]
+(defn email-file-to-sendfiles-mp
+  "[em-file (coll)]
 
   Produce one or more output files targeted
   for different SMTP servers constraining the sequence of emails
   in each to honor spam score constraints specified in config.edn
   and never to include two emails to the same address across all
   batches."
-  [email-stream verbose]
+  [em-file verbose]
 
   (let [em-addrs-hit (ref #{})
+        shared-chan (chan 100)
         workers (map (fn [id smtp-ip]
                        {:id        id
                         :smtp-ip   smtp-ip
-                        :ch        (chan)
+                        :ch        shared-chan
                         :addrs-hit em-addrs-hit
                         :out-file  (str
                                      (:bulkmail-out-path env-hack) "/em"
                                      smtp-ip ".txt")
-                        :stats     (atom {:sent-ct                 0
+                        :stats     (atom {:sent-ct               0
                                           :last-n-mean           0
                                           :spam-score-sum        0
                                           :rejected-score        0
@@ -113,11 +113,12 @@
                           (:worker-ct env-hack))
                     (:smtp env-hack)))
 
-        work-procs (dorun
+        work-procs (doall
                      (map (fn [w]
                             (go-loop []
-                              (when-let [task (<! (:ch w))]
-                                (emw-email-consider w task)
+                              (when-let [em-chunk (<! (:ch w))]
+                                (doseq [em em-chunk]
+                                  (emw-email-consider w em))
                                 (recur))))
                        workers))]
 
@@ -129,11 +130,10 @@
          :smtp-ip  (:smtp-ip w)}))
 
     (p :feed-workers
-      (dorun
-        (map (fn [worker em-rec]
-               (>!! (:ch worker) em-rec))
-          (cycle workers)
-          email-stream)))
+      (with-open [in (java.io.PushbackReader. (clojure.java.io/reader em-file))]
+          (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
+            (doseq [em-chunk (take-while (partial not= :fini) edn-seq)]
+              (>!! shared-chan em-chunk)))))
 
     (pln :waiting-on-workers)
 
@@ -176,13 +176,13 @@
 
   [w task]
 
-  ;;(pln :consider (:spam-score task)(:email-address task))
+  (xpln :consider (:spam-score task) (:email-address task))
 
   (cond
     (> (:spam-score task) (:individual-max env-hack))
     (do
       (swap! (:stats w) update-in [:rejected-score] inc)
-      #_(pln :email-indy-bad :w (:id w) :score (:spam-score task)))
+      (xpln :email-indy-bad :w (:id w) :score (:spam-score task)))
 
     :default
     (let [stats @(:stats w)
@@ -192,15 +192,15 @@
         (> (/ new-sum new-ct)
           (:overall-mean-max env-hack))
         (do (swap! (:stats w) update-in [:rejected-overall-mean] inc)
-            #_(pln :overall-email-mean-bad :score (:spam-score task)
-                :new-mean (/ new-sum new-ct)
-                :limit (:overall-mean-max env-hack)))
+            (xpln :overall-email-mean-bad :score (:spam-score task)
+              :new-mean (/ new-sum new-ct)
+              :limit (:overall-mean-max env-hack)))
 
         (not (p :span-mean (span-mean-ok w (:spam-score task))))
         ;; todo save to "try later" array to be possibly
         ;; incorporated later when running mean might drop
         (do (swap! (:stats w) update-in [:rejected-span-mean] inc)
-            #_(pln :span-mean-bad (:spam-score task)))
+            (pln :span-mean-bad (:spam-score task)))
 
         :default
         (when (dosync
@@ -214,13 +214,13 @@
                     (do
                       (alter (:addrs-hit w) conj addr)
                       true))))
-          (swap! (:stats w) merge {:sent-ct          new-ct
+          (swap! (:stats w) merge {:sent-ct        new-ct
                                    :spam-score-sum new-sum})
 
           ;;; todo batch spits instead of spitting individually?
           #_(pln :sending-to (:id w) (:spam-score task)
               :mean (/ new-sum new-ct))
-          (spit (:out-file w) task :append true))))))
+          #_(spit (:out-file w) task :append true))))))
 
 (defn span-mean-ok
   "[w (writer) new-score (score of email being considered)]
@@ -269,3 +269,5 @@
 (defn pln [& args]
   (locking *out*
     (println (str/join " " args))))
+
+(defn xpln [& args])
