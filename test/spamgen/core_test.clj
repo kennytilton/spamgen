@@ -128,41 +128,16 @@
     {:dynamic? true}
     (p :devtest-mp
       (email-file-to-sendfiles-mp
-        "bulkinput/em-1000000-100.edn"
+        "bulkinput/em-200000-100.edn"
         false)))
   (pln :devtest-fini))
 
-(deftest devtest
-  (profile
-    {:dynamic? true}
-    (p :devtest-mp
-      (email-stream-to-sendfiles-mp
-        (email-records-test-gen 100000)
-        false)))
-  (pln :devtest-fini))
-
-(deftest test-gen-count
-  (profile
-    {:dynamic? true}
-    (p :test-gen-count
-      (let [test (email-records-test-gen 10000)]
-        (pln :testing!)
-        (count test)))))
-
-(deftest test-gen-apit
-  (profile
-    {:dynamic? true}
-    (p :test-gen-count
-      (spit "testgen.edn"
-        (into [] (email-records-test-gen 100000))))))
-
-(deftest test-gen-slurp
-  (profile
-    {:dynamic? true}
-    (p :test-gen-count
-      (slurp "testgen.edn"))))
-
-
+(deftest slurptest-unprof
+  (let [wait (atom (System/currentTimeMillis))]
+    (email-file-to-sendfiles-mp
+      "bulkinput/em-200000-100.edn"
+      false)
+    (pln :slurptest-took (- (System/currentTimeMillis) @wait))))
 
 ;; todo add tests to read back in output and confirm constraints met
 

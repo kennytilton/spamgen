@@ -99,7 +99,7 @@
                         :smtp-ip   smtp-ip
                         :ch        shared-chan
                         :spit-chan spit-chan
-                        :out-buff (atom nil)
+                        :out-buff  (atom nil)
                         :addrs-hit em-addrs-hit
                         :spit-file (str
                                      (:bulkmail-out-path env-hack) "/em-"
@@ -137,24 +137,28 @@
     ;; --- start the spitter ---------------------------------------
 
     (let [spitters
-          nil #_ (doall (for [_ (range 5)]
-            (p :spitting
-                    (go-loop []
-                      (if-let [x (<! spit-chan)]
-                        (let [[spit-file em] x]
-                          (xpln :sptting spit-file em)
-                          (spit spit-file em :append true)
-                          (recur))
-                        (pln :spitter-out!!!!))))))]
+          nil #_(doall (for [_ (range 5)]
+                         (p :spitting
+                           (go-loop []
+                             (if-let [x (<! spit-chan)]
+                               (let [[spit-file em] x]
+                                 (xpln :sptting spit-file em)
+                                 (spit spit-file em :append true)
+                                 (recur))
+                               (pln :spitter-out!!!!))))))]
 
       ;; --- feed the workers ----------------------------------------
 
-      (p :feed-workers
-        (with-open [in (java.io.PushbackReader. (clojure.java.io/reader em-file))]
-          (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
-            (doseq [em-chunk (take-while (partial not= :fini) edn-seq)]
-              (xpln :chunk-top)
-              (>!! shared-chan em-chunk)))))
+      (let [wait (atom 0)]
+        (p :feed-workers
+          (with-open [in (java.io.PushbackReader. (clojure.java.io/reader em-file))]
+            (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
+              (doseq [em-chunk (take-while (partial not= :fini) edn-seq)]
+                (xpln :chunk-top)
+                (let [start (System/currentTimeMillis)]
+                  (>!! shared-chan em-chunk)
+                  (swap! wait + (- (System/currentTimeMillis) start)))))))
+        (pln :feeder-waited @wait :miilis))
 
       ;; --- let the workers finish ----------------------------------
 
@@ -165,15 +169,15 @@
           (when-let [out (alt!!
                            (timeout 100) :timeout
                            work-proc ([r] r))]
-            (pln :bam-worker-out work-proc)
+            ;;(pln :bam-worker-out work-proc)
             (recur rest))))
 
       (pln :waitingonspitterc)
       (doseq [spitter spitters]
-      (when-let [out (alt!!
-                       (timeout 1000) :timeout
-                       spitter ([r] r))]
-        (print :spitwait out)))
+        (when-let [out (alt!!
+                         (timeout 1000) :timeout
+                         spitter ([r] r))]
+          (print :spitwait out)))
 
       ;; --- dump worker stats ---------------------------------------
 
@@ -227,7 +231,7 @@
               :new-mean (/ new-sum new-ct)
               :limit (:overall-mean-max env-hack)))
 
-        (not (p :span-mean (span-mean-ok w (:spam-score task))))
+        (not (span-mean-ok w (:spam-score task)))
         ;; todo save to "try later" array to be possibly
         ;; incorporated later when running mean might drop
         (do (swap! (:stats w) update-in [:rejected-span-mean] inc)
@@ -250,16 +254,16 @@
 
           (xpln :sending-to (:spit-chan w) [(:spit-file w) task])
 
-          (when (>= (count @(:out-buff w)) 100)
-              (spit (:spit-file w) @(:out-buff w) :append true)
-              (reset! (:out-buff w) nil))
+          (when (>= (count @(:out-buff w)) 500)
+            (spit (:spit-file w) @(:out-buff w) :append true)
+            (reset! (:out-buff w) nil))
 
           (swap! (:out-buff w) conj task)
 
-          #_ (>!! (:spit-chan w)
-            [(:spit-file w) task]))))))
+          #_(>!! (:spit-chan w)
+              [(:spit-file w) task]))))))
 
-(defn span-mean-ok
+(defnp span-mean-ok
   "[w (writer) new-score (score of email being considered)]
   Decide if this new score, if included, will violate running mean score
   invariants specified in config.edn"
