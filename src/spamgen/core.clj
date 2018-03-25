@@ -238,30 +238,23 @@
             (pln :span-mean-bad (:spam-score task)))
 
         :default
-        (when (dosync
-                ;; todo make sure addr key matches generator when testing
-                ;; or work out how to normalize keys in spec
-                (let [addr (:email-address task)]
-                  (if (get @(:addrs-hit w) addr)
-                    (do
-                      (swap! (:stats w) update-in [:rejected-dup-addr] inc)
-                      false)
-                    (do
-                      (alter (:addrs-hit w) conj addr)
-                      true))))
-          (swap! (:stats w) merge {:sent-ct        new-ct
-                                   :spam-score-sum new-sum})
+        (if (get @(:addrs-hit w) (:email-address task))
+          (swap! (:stats w) update-in [:rejected-dup-addr] inc)
+          (do
+            (dosync (commute (:addrs-hit w) conj (:email-address task)))
+            (swap! (:stats w) merge {:sent-ct        new-ct
+                                     :spam-score-sum new-sum})
 
-          (xpln :sending-to (:spit-chan w) [(:spit-file w) task])
+            (xpln :sending-to (:spit-chan w) [(:spit-file w) task])
 
-          (when (>= (count @(:out-buff w)) 500)
-            (spit (:spit-file w) @(:out-buff w) :append true)
-            (reset! (:out-buff w) nil))
+            (when (>= (count @(:out-buff w)) 500)
+              (spit (:spit-file w) @(:out-buff w) :append true)
+              (reset! (:out-buff w) nil))
 
-          (swap! (:out-buff w) conj task)
+            (swap! (:out-buff w) conj task)
 
           #_(>!! (:spit-chan w)
-              [(:spit-file w) task]))))))
+              [(:spit-file w) task])))))))
 
 (defnp span-mean-ok
   "[w (writer) new-score (score of email being considered)]
