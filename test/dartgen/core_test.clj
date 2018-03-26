@@ -2,9 +2,6 @@
   (:require [clojure.test :refer :all]
             [dartgen.core :refer :all]))
 
-(deftest test-maxmin-nslices-ndarts
-  (maxmin-nslices-ndarts 1 1 (range 3)))
-
 (deftest darts
   (let [board nil]
     (is (= 1 (no-can-dart 0 board)))
