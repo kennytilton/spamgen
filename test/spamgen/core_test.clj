@@ -39,7 +39,7 @@
     {:dynamic? true}
     (p :devtest-mp
       (email-file-to-sendfiles-mp
-        "bulkinput/em-200000-100.edn"
+        "bulkinput/em-100000-100.edn"
         false)))
   (pln :devtest-fini))
 

@@ -13,12 +13,12 @@
     [spamgen.genlist :refer :all]))
 
 (def spamgen-cli
-  [["-t" "--test TESTCOUNT" "Number of test email records to process ignoring file arg"
-    :id :test-count
-    :default 100
-    ;; todo handle inputs like 100k
-    :parse-fn #(Integer/parseInt %)
-    :validate [#(<= 1 %) "Must be a number greater than one (1)"]]
+  [["-t" "--test TESTFILE" "Just filename and extension of a file under bulkinput/"
+    :id :test-input-file
+    :default "em-100000-100.edn"
+    ;; todo check here that file exists
+    ;; :validate [#(<= 1 %) "Must be a number greater than one (1)"]
+    ]
    ["-v" "--verbose"]
 
    ["-h" "--help"]])
@@ -36,9 +36,9 @@
    :bulkmail-out-path "bulkmail"
    })
 
-(declare pln xpln email-stream-to-sendfiles-mp)
+(declare pln xpln email-file-to-sendfiles-mp)
 
-#_(-main "-t30000" "-v")
+#_(-main "-v")
 
 (defn -main [& args]
   ;; uncomment during development so errors get through when async in play
@@ -51,7 +51,7 @@
 
   (let [input (cli/parse-opts args spamgen-cli)
         {:keys [options arguments summary errors]} input
-        {:keys [verbose test-count help]} options]
+        {:keys [verbose test-input-file help]} options]
 
     (cond
       errors (doseq [e errors]
@@ -60,8 +60,8 @@
       help (println "\nUsage:\n\n    spamgen <input-edn> options*\n\n"
              "Options:\n" (subs summary 1))
 
-      :default (email-stream-to-sendfiles-mp
-                 (email-records-test-gen test-count)
+      :default (email-file-to-sendfiles-mp
+                 (str "bulkinput/" test-input-file)
                  verbose)))
 
   ;; WARNING: comment this out for use with REPL. Necessary, to
@@ -70,16 +70,10 @@
   ;;(shutdown-agents)
   )
 
-(declare email-stream-to-sendfiles
+(declare
   emw-email-consider
   span-mean-ok
   edn-dump pln)
-
-(defn email-batch-to-sendfiles [batch-input-path]
-  (with-open [in (java.io.PushbackReader. (clojure.java.io/reader batch-input-path))]
-    (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
-      (email-stream-to-sendfiles
-        (take-while (partial not= :fini) edn-seq)))))
 
 (defn email-file-to-sendfiles-mp
   "[em-file (coll)]
