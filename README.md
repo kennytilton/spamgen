@@ -2,6 +2,8 @@
 
 How can we get the word out on healthy, effective herbal remedies without being detected by Big Pharma? SpamGen!
 
+And how can we use a web app to do so? [SpamUX](https://github.com/kennytilton/spamux/blob/master/README.md)!
+
 And how about bar bets about dart scores? `board-yielding-highest-unattainable`!
 
 ## Installation
