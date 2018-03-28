@@ -13,19 +13,6 @@
 (tufte/add-basic-println-handler! {})
 
 
-
-
-#_(let [chunk 100
-        total 40000]
-    (let [chunks (partition-all chunk
-                   (email-records-test-gen total))]
-      (dorun
-        (map (fn [n c]
-               (spit (format "bulkinput/em-%d-%d.edn" total chunk)
-                 (into [] c) :append (pos? n)))
-          (range)
-          chunks))))
-
 #_(with-open [in (java.io.PushbackReader. (clojure.java.io/reader "bulkinput/em-12.edn"))]
     (let [edn-seq (repeatedly (partial edn/read {:eof :fini} in))]
       (doseq [chunk (take-while (partial not= :fini) edn-seq)]

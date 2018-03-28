@@ -3,61 +3,22 @@
 
 (declare pln xpln)
 
-(defn low-score-unattainable
-  "Given a nmber of darts and the scores available on a dartboard, return
-  the lowest total score that cannot be scored. e.g., with one dart and
-  scores 1 and 3, we cannot score two. Withe two darts we cannot score 5.
+(defn low-score-unattainable [darts board]
+  (letfn [(scorable? [goal darts]
+            (cond
+              (zero? goal) true
+              (or
+                (zero? darts)
+                (empty? board)
+                (neg? goal)) false
 
-  Assumes scores are positive."
+              (some #{goal} board) true
 
-  [dart-ct dartboard-scores]
-
-  (let [scores (sort (distinct dartboard-scores))           ;; short for normalized scores
-        gapless (atom 0)]                                   ;; short for gapless max score observed as we traverse possible scoring combos
-    (cond
-      ;;; nail a couple of special cases
-      (or
-        (not (pos? dart-ct))
-        (empty? dartboard-scores)
-        (> (first scores) 1))
-      1
-
-      ;; this one actually spares us a full sweep
-      (= dartboard-scores (range 1 (inc (count dartboard-scores))))
-      (inc (* dart-ct (last scores)))
-
-      :default
-      (letfn [(next-in-order []
-                (inc @gapless))
-              (throw-dart [dart-no score-so-far]
-                (when (pos? dart-no)
-                  (loop [[throw-score & rthrows] scores]
-                    (when throw-score
-                      (let [new-total (+ score-so-far throw-score)]
-                        ;; we could pull the recursive call here since all branches of the cond
-                        ;; invoke it, but methinks that borders on obfuscation
-                        (cond
-                          (= new-total (next-in-order))
-                          (do
-                            (swap! gapless inc)
-                            ;; we keep going as an efficiency: if the next slice is one more
-                            ;; than the current slice, we can bump our gapless value straight away,
-                            ;; effectively pruning further searching.
-                            (throw-dart (dec dart-no) new-total)
-                            (recur rthrows))
-
-                          (> new-total (next-in-order))
-                          ;; rthrows, being sorted, contains only higher values, so abandon this dart
-                          ;; and try the next, if any, which will possibly have access to lower values.
-                          (throw-dart (dec dart-no) new-total)
-
-                          :default                          ;; ie, new-total too low
-                          ;; try next dart if any and keep trying this dart
-                          (do
-                            (throw-dart (dec dart-no) new-total)
-                            (recur rthrows))))))))]
-        (throw-dart dart-ct 0)
-        (next-in-order)))))
+              :default (some (fn [s]
+                               (scorable? (- goal s) (dec darts)))
+                         board)))]
+    (some #(when-not (scorable? % darts) %)
+      (range))))
 
 (defn board-yielding-highest-unattainable
   "Given a dart board with 'slices' hittable scores not
@@ -99,6 +60,8 @@
                      (rboard (dec slices)
                        (inc score) maxi
                        (conj board-so-far score))))))]
+         ;; as a convenience we force a "1" score (then adjust down the
+         ;; number of slices) because without a score of 1 the lowest unattainable is 1.
          (rboard (dec slices) mini maxi [1])
          @best)))))
 

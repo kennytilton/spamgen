@@ -45,6 +45,17 @@
      (email-records-test-gen)
      (take n (email-records-test-gen)))))
 
+#_(let [chunk 100
+        total 4000000]
+    (let [chunks (partition-all chunk
+                   (email-records-test-gen total))]
+      (dorun
+        (map (fn [n c]
+               (spit (format "bulkinput/em-%d-%d.edn" total chunk)
+                 (into [] c) :append (pos? n)))
+          (range)
+          chunks))))
+
 ;;; --- specs where dups are likely ---------------------
 
 (def email-usernames
